@@ -1,0 +1,66 @@
+RestoreFormer++ PyTorch goldens — fp32, CPU, PyTorch NCHW, C-contiguous.
+checkpoint: weights/RestoreFormer++.ckpt (state_dict, vqvae.* stripped)
+constructor: VQVAEGANMultiHeadTransformer() — the ++ defaults ARE the release
+  config: ch=64 ch_mult=(1,2,2,4,4,8) n_embed=1024 embed_dim=256 head_size=4
+  enc attn@16, dec attn@[16,32] (ex_multi_scale_num=1)
+input contract: RGB, 512x512, [-1,1]; output [-1,1] clamp; fully deterministic
+
+resblock_nin_in.npy                      (1, 64, 64, 64)            dtype=float32
+resblock_nin_out.npy                     (1, 128, 64, 64)           dtype=float32
+resblock_same_in.npy                     (1, 64, 32, 32)            dtype=float32
+resblock_same_out.npy                    (1, 64, 32, 32)            dtype=float32
+selfattn_in.npy                          (1, 512, 16, 16)           dtype=float32
+selfattn_out.npy                         (1, 512, 16, 16)           dtype=float32
+crossattn_y.npy                          (1, 512, 16, 16)           dtype=float32
+crossattn_out.npy                        (1, 512, 16, 16)           dtype=float32
+downsample_in.npy                        (1, 64, 32, 32)            dtype=float32
+downsample_out.npy                       (1, 64, 16, 16)            dtype=float32
+upsample_in.npy                          (1, 512, 8, 8)             dtype=float32
+upsample_out.npy                         (1, 512, 16, 16)           dtype=float32
+quantize_in.npy                          (1, 256, 16, 16)           dtype=float32
+quantize_out.npy                         (1, 256, 16, 16)           dtype=float32
+quantize_indices.npy                     (256,)                     dtype=int64
+full_rand_in.npy                         (1, 3, 512, 512)           dtype=float32
+full_rand_enc_in.npy                     (1, 64, 512, 512)          dtype=float32
+full_rand_enc_block_0.npy                (1, 64, 512, 512)          dtype=float32
+full_rand_enc_block_1.npy                (1, 128, 256, 256)         dtype=float32
+full_rand_enc_block_2.npy                (1, 128, 128, 128)         dtype=float32
+full_rand_enc_block_3.npy                (1, 256, 64, 64)           dtype=float32
+full_rand_enc_block_4.npy                (1, 256, 32, 32)           dtype=float32
+full_rand_enc_block_5_atten.npy          (1, 512, 16, 16)           dtype=float32
+full_rand_enc_mid_atten.npy              (1, 512, 16, 16)           dtype=float32
+full_rand_enc_out.npy                    (1, 256, 16, 16)           dtype=float32
+full_rand_quant_conv.npy                 (1, 256, 16, 16)           dtype=float32
+full_rand_zq.npy                         (1, 256, 16, 16)           dtype=float32
+full_rand_indices.npy                    (256,)                     dtype=int64
+full_rand_post_quant.npy                 (1, 256, 16, 16)           dtype=float32
+full_rand_dec_mid.npy                    (1, 512, 16, 16)           dtype=float32
+full_rand_dec_level5.npy                 (1, 512, 32, 32)           dtype=float32
+full_rand_dec_level4.npy                 (1, 256, 64, 64)           dtype=float32
+full_rand_dec_level3.npy                 (1, 256, 128, 128)         dtype=float32
+full_rand_dec_level2.npy                 (1, 128, 256, 256)         dtype=float32
+full_rand_dec_level1.npy                 (1, 128, 512, 512)         dtype=float32
+full_rand_dec_level0.npy                 (1, 64, 512, 512)          dtype=float32
+full_rand_image.npy                      (1, 3, 512, 512)           dtype=float32
+full_face_in.npy                         (1, 3, 512, 512)           dtype=float32
+full_face_enc_in.npy                     (1, 64, 512, 512)          dtype=float32
+full_face_enc_block_0.npy                (1, 64, 512, 512)          dtype=float32
+full_face_enc_block_1.npy                (1, 128, 256, 256)         dtype=float32
+full_face_enc_block_2.npy                (1, 128, 128, 128)         dtype=float32
+full_face_enc_block_3.npy                (1, 256, 64, 64)           dtype=float32
+full_face_enc_block_4.npy                (1, 256, 32, 32)           dtype=float32
+full_face_enc_block_5_atten.npy          (1, 512, 16, 16)           dtype=float32
+full_face_enc_mid_atten.npy              (1, 512, 16, 16)           dtype=float32
+full_face_enc_out.npy                    (1, 256, 16, 16)           dtype=float32
+full_face_quant_conv.npy                 (1, 256, 16, 16)           dtype=float32
+full_face_zq.npy                         (1, 256, 16, 16)           dtype=float32
+full_face_indices.npy                    (256,)                     dtype=int64
+full_face_post_quant.npy                 (1, 256, 16, 16)           dtype=float32
+full_face_dec_mid.npy                    (1, 512, 16, 16)           dtype=float32
+full_face_dec_level5.npy                 (1, 512, 32, 32)           dtype=float32
+full_face_dec_level4.npy                 (1, 256, 64, 64)           dtype=float32
+full_face_dec_level3.npy                 (1, 256, 128, 128)         dtype=float32
+full_face_dec_level2.npy                 (1, 128, 256, 256)         dtype=float32
+full_face_dec_level1.npy                 (1, 128, 512, 512)         dtype=float32
+full_face_dec_level0.npy                 (1, 64, 512, 512)          dtype=float32
+full_face_image.npy                      (1, 3, 512, 512)           dtype=float32

@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+.DS_Store
+oracle/.venv/
+oracle/upstream/
+oracle/weights/
+oracle/converted/
+oracle/goldens/*.npy
+Package.resolved
