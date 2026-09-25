@@ -71,10 +71,10 @@ public final class ResnetBlock: Module {
 
     public init(inChannels: Int, outChannels: Int) {
         self._norm1.wrappedValue = groupNorm(inChannels)
-        self._conv1.wrappedValue = Conv2d(
+        self._conv1.wrappedValue = WinogradFreeConv2d(
             inputChannels: inChannels, outputChannels: outChannels, kernelSize: 3, padding: 1)
         self._norm2.wrappedValue = groupNorm(outChannels)
-        self._conv2.wrappedValue = Conv2d(
+        self._conv2.wrappedValue = WinogradFreeConv2d(
             inputChannels: outChannels, outputChannels: outChannels, kernelSize: 3, padding: 1)
         self._ninShortcut.wrappedValue = inChannels != outChannels
             ? Conv2d(inputChannels: inChannels, outputChannels: outChannels, kernelSize: 1)
@@ -138,7 +138,7 @@ public final class MultiHeadAttnBlock: Module {
 public final class Upsample: Module {
     @ModuleInfo(key: "conv") public var conv: Conv2d
     public init(_ channels: Int) {
-        self._conv.wrappedValue = Conv2d(
+        self._conv.wrappedValue = WinogradFreeConv2d(
             inputChannels: channels, outputChannels: channels, kernelSize: 3, padding: 1)
     }
     public func callAsFunction(_ x: MLXArray) -> MLXArray { conv(upsampleNearest2x(x)) }
@@ -213,7 +213,7 @@ public final class MultiHeadEncoder: Module {
         self.numResolutions = chMult.count
         self.numResBlocks = numResBlocks
 
-        self._convIn.wrappedValue = Conv2d(
+        self._convIn.wrappedValue = WinogradFreeConv2d(
             inputChannels: inChannels, outputChannels: ch, kernelSize: 3, padding: 1)
 
         var curRes = resolution
@@ -240,7 +240,7 @@ public final class MultiHeadEncoder: Module {
 
         self._mid.wrappedValue = MidBlock(blockIn, headSize: headSize)
         self._normOut.wrappedValue = groupNorm(blockIn)
-        self._convOut.wrappedValue = Conv2d(
+        self._convOut.wrappedValue = WinogradFreeConv2d(
             inputChannels: blockIn, outputChannels: zChannels, kernelSize: 3, padding: 1)
     }
 
@@ -293,7 +293,7 @@ public final class MultiHeadDecoderTransformer: Module {
         var blockIn = ch * chMult[chMult.count - 1]
         var curRes = resolution / (1 << (chMult.count - 1))
 
-        self._convIn.wrappedValue = Conv2d(
+        self._convIn.wrappedValue = WinogradFreeConv2d(
             inputChannels: zChannels, outputChannels: blockIn, kernelSize: 3, padding: 1)
         self._mid.wrappedValue = MidBlock(blockIn, headSize: headSize)
 
@@ -316,7 +316,7 @@ public final class MultiHeadDecoderTransformer: Module {
         self._up.wrappedValue = levels
 
         self._normOut.wrappedValue = groupNorm(blockIn)
-        self._convOut.wrappedValue = Conv2d(
+        self._convOut.wrappedValue = WinogradFreeConv2d(
             inputChannels: blockIn, outputChannels: outCh, kernelSize: 3, padding: 1)
     }
 
@@ -400,6 +400,15 @@ public final class RestoreFormer: Module, @unchecked Sendable {
             inputChannels: cfg.zChannels, outputChannels: cfg.embedDim, kernelSize: 1)
         self._postQuantConv.wrappedValue = Conv2d(
             inputChannels: cfg.embedDim, outputChannels: cfg.zChannels, kernelSize: 1)
+        super.init()
+        if let route = RestoreFormerConvRoute.environmentOverride { convRoute = route }
+    }
+
+    /// Route for the in-window 3×3 convs (WinogradFreeConv2d.swift). Default `.conv3d`: raw
+    /// Winograd costs up to 17 of 255 levels on a face and can flip VQ codebook picks.
+    public var convRoute: RestoreFormerConvRoute {
+        get { modules().lazy.compactMap { ($0 as? WinogradFreeConv2d)?.route }.first ?? .conv3d }
+        set { for case let conv as WinogradFreeConv2d in modules() { conv.route = newValue } }
     }
 
     /// Restore an aligned face crop.

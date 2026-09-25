@@ -59,6 +59,32 @@ swift run restoreformer-gate --fp16 oracle/goldens oracle/converted/RestoreForme
 swift run restoreformer-validate oracle/converted/RestoreFormer++/model.safetensors photo.png
 ```
 
+## GPU numerics: mlx's lossy Winograd conv2d window (2026-09-24)
+
+mlx's Metal `conv2d` takes a Winograd F(6×6,3×3) path when the conv is 3×3, stride 1, dilation 1,
+groups 1, C % 32 == 0, O % 32 == 0, C + O ≥ 256 and N·H·W ≥ 4096. On M5 that path loses about
+6.4e-3 relL2 per conv in fp32, because its inner GEMM runs TF32.
+
+RestoreFormer++ has 33 such convs per 512² face: the encoder levels at 256²/128²/64², and the decoder
+resnets and upsamplers from 64² to 512². The S-mode gates pin the CPU device, and the GPU modes carry
+no fp32 threshold, so none of this showed.
+
+Every stride-1 3×3 conv is now a `WinogradFreeConv2d`. **Default `.conv3d`** (`model.convRoute`,
+type `RestoreFormerConvRoute`).
+
+Measurements: aligned 512² face fixture, production fp32, GPU against the CPU lane.
+
+| | Raw conv2d (Winograd) | conv3d route |
+|---|---|---|
+| Output | 5.0e-3 · max 0.131 · **17 of 255 levels** | 8.2e-4 · max 1.25e-2 · 2 levels |
+| VQ codebook indices | 1 of 256 flipped (a near-tie) | identical |
+| Forward time, 512² | 271 ms | **232 ms** — the route is faster at these shapes |
+
+- The remaining 8.2e-4 is TF32 in the attention matmuls. With `MLX_ENABLE_TF32=0` both lanes agree
+  to ~5e-6.
+- Environment override: `RESTOREFORMER_CONV_ROUTE=winograd|conv3d|fp32Winograd`.
+- Gate: `RF_LANE=1 swift test -c release -Xswiftc -enable-testing --filter GPULaneTests`.
+
 ## License
 
 Apache-2.0 (port code and weights; upstream is plain Apache-2.0). Residual: ROHQD/model
