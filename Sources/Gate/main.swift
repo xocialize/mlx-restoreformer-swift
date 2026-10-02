@@ -209,19 +209,19 @@ guard let mode = args.first else {
 switch mode {
 case "--bench":
     guard args.count >= 2 else { fail("--bench needs a weights path") }
-    Device.setDefault(device: .gpu)
+    Device.setDefault(device: Device(.gpu))
     gateBench(args[1])
 case "--fp16", "--bf16":
     guard args.count >= 3 else { fail("\(mode) needs <goldens> <weights>") }
-    Device.setDefault(device: .gpu)
+    Device.setDefault(device: Device(.gpu))
     gateDtype(args[1], args[2], dtype: mode == "--fp16" ? .float16 : .bfloat16,
               label: mode == "--fp16" ? "fp16" : "bf16")
 case "--s0":
-    Device.setDefault(device: .cpu)
+    Device.setDefault(device: Device(.cpu))
     guard args.count >= 2 else { fail("--s0 needs a weights path") }
     gateS0(args[1])
 case "--s1", "--s3", "--all":
-    Device.setDefault(device: .cpu)
+    Device.setDefault(device: Device(.cpu))
     guard args.count >= 3 else { fail("\(mode) needs <goldens> <weights>") }
     let (dir, w) = (args[1], args[2])
     var ok = true
