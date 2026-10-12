@@ -91,6 +91,29 @@ Measurements: aligned 512² face fixture, production fp32, GPU against the CPU l
 - Environment override: `RESTOREFORMER_CONV_ROUTE=winograd|conv3d|fp32Winograd`.
 - Gate: `RF_LANE=1 swift test -c release -Xswiftc -enable-testing --filter GPULaneTests`.
 
+## 16 bits end to end (0.3.0)
+
+The surface declares `ToolDescriptor.rawImageFormats = [.rawBGRA8, .rawRGBA16]` (MLXToolKit contract 1.52.0,
+AB-T-0230). A `.rawRGBA16` image comes back `.rawRGBA16`; a PNG or TIFF deeper than 8 bits comes back as a 16-bit PNG.
+- **Every pixel hop of the face pass runs at 16 bits** (`restoreDeep`). The FFHQ crop is warped into a 16-bit canvas
+  (`FaceAlign.warpDeep`), and the restored face is rounded to 16 bits and warped back into one. The feather mask is warped
+  at 16 bits (`FaceAlign.warpedMaskDeep`), and the composite runs in float. An 8-bit face inside a 16-bit frame would be
+  an 8-bit plateau inside the paste mask, a visible tone step in a sky behind a portrait.
+- Faces are found on the image's 8-bit rendering, as the 8-bit path finds them. No face: the input comes back as it was.
+- **G-6 gate** (2026-10-12, `mlxengine-image/WIP/g6-16bit-gate`, `faces`): on a portrait in front of a 16-bit sky,
+  the 16-bit output's smooth-area flat-neighbour share in the band just inside the paste edge is 0.043, against
+  0.90 for the 8-bit output, and the edge shows no step at ×8 contrast. What remains is RestoreFormer++'s own re-render of the
+  background inside its crop (about 2 steps darker), feathered, the same at 8 bits.
+- 8-bit inputs take the 8-bit path: 62/62 outputs (7 images × png, png at strength 0.5, rawBGRA8, jpeg, with NAFNet and
+  the other face model alongside) byte-identical to an output of v0.2.1, in release builds on the GPU.
+
+## Faces in a fixed order (0.3.0)
+
+Vision returns the same faces in no fixed order from run to run, and the paste-back composites them in order. Where two
+faces' paste masks overlap, the output depended on the run: across 13 runs of v0.2.1 on GFPGAN's `Blake_Lively`, every
+variant came out two ways. `FaceAlign.detectFaces` now sorts faces left to right by the left eye (then top to bottom),
+so the output is deterministic and matches one of the two.
+
 ## License
 
 Apache-2.0 (port code and weights; upstream is plain Apache-2.0). Residual: ROHQD/model

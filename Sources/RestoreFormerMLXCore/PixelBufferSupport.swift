@@ -98,3 +98,82 @@ public func pixelBuffer(fromRGBNHWC array: MLXArray, width: Int, height: Int) ->
     }
     return buffer
 }
+
+// MARK: - 16 bits (MLXToolKit contract 1.52.0, AB-T-0230)
+
+/// The 16-bit pixel format: RGBA, 16 bits per component, little-endian — `.rawRGBA16`'s layout, and the shared tile
+/// driver's `MLXTileProcessor.deepPixelFormat` in the upscale siblings.
+public let deepPixelFormat: OSType = kCVPixelFormatType_64RGBALE
+
+/// Whether `buffer` is a 16-bit (`deepPixelFormat`) buffer.
+public func isDeep(_ buffer: CVPixelBuffer) -> Bool {
+    CVPixelBufferGetPixelFormatType(buffer) == deepPixelFormat
+}
+
+/// RGBA16 `CVPixelBuffer` (`deepPixelFormat`) → `[1, H, W, 3]` RGB float NHWC in [0,1] (each component / 65535).
+@inline(never)
+public func rgbNHWC(fromRGBA16 buffer: CVPixelBuffer, width: Int, height: Int) -> MLXArray? {
+    CVPixelBufferLockBaseAddress(buffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+    guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+    let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+    var rgb = [Float](repeating: 0, count: height * width * 3)
+    for y in 0 ..< height {
+        let src = base.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt16.self)
+        let drow = y * width * 3
+        for x in 0 ..< width {
+            for c in 0 ..< 3 { rgb[drow + x * 3 + c] = Float(UInt16(littleEndian: src[x * 4 + c])) / 65535.0 }
+        }
+    }
+    return MLXArray(rgb, [1, height, width, 3])
+}
+
+/// Interleaved RGBA16 words (tightly packed, `width * 4` per row) → `[1, H, W, 3]` RGB float NHWC in [0,1].
+@inline(never)
+public func rgbNHWC(fromRGBA16Words words: [UInt16], width: Int, height: Int) -> MLXArray {
+    var rgb = [Float](repeating: 0, count: height * width * 3)
+    for p in 0 ..< (width * height) {
+        for c in 0 ..< 3 { rgb[p * 3 + c] = Float(UInt16(littleEndian: words[p * 4 + c])) / 65535.0 }
+    }
+    return MLXArray(rgb, [1, height, width, 3])
+}
+
+/// `[1, H, W, 3]` RGB float (any range; clamped) → interleaved RGBA16 words, each component rounded to 16 bits, alpha
+/// opaque.
+@inline(never)
+public func rgba16Words(fromRGBNHWC array: MLXArray, width: Int, height: Int) -> [UInt16]? {
+    let rgb = array.asType(.float32).asArray(Float.self)
+    guard rgb.count >= width * height * 3 else { return nil }
+    var words = [UInt16](repeating: UInt16.max.littleEndian, count: width * height * 4)
+    for p in 0 ..< (width * height) {
+        for c in 0 ..< 3 { words[p * 4 + c] = UInt16(max(0, min(65535, (rgb[p * 3 + c] * 65535).rounded()))).littleEndian }
+    }
+    return words
+}
+
+/// `[1, H, W, 3]` RGB float (any range; clamped) → RGBA16 `CVPixelBuffer` (`deepPixelFormat`), each component rounded
+/// to 16 bits, alpha opaque.
+@inline(never)
+public func pixelBufferRGBA16(fromRGBNHWC array: MLXArray, width: Int, height: Int) -> CVPixelBuffer? {
+    guard let words = rgba16Words(fromRGBNHWC: array, width: width, height: height) else { return nil }
+    var pb: CVPixelBuffer?
+    let attrs: [String: Any] = [
+        kCVPixelBufferPixelFormatTypeKey as String: deepPixelFormat,
+        kCVPixelBufferWidthKey as String: width,
+        kCVPixelBufferHeightKey as String: height,
+        kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+    ]
+    guard CVPixelBufferCreate(nil, width, height, deepPixelFormat, attrs as CFDictionary, &pb) == kCVReturnSuccess,
+          let buffer = pb else { return nil }
+    CVPixelBufferLockBaseAddress(buffer, [])
+    defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+    guard let dstBase = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+    let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+    words.withUnsafeBytes { src in
+        guard let srcBase = src.baseAddress else { return }
+        for y in 0 ..< height {
+            memcpy(dstBase.advanced(by: y * bytesPerRow), srcBase.advanced(by: y * width * 8), width * 8)
+        }
+    }
+    return buffer
+}

@@ -78,7 +78,12 @@ public enum FaceAlign {
             let t = similarityTransform(from: five, to: template512)
             faces.append(AlignedFace(landmarks: five, transform: t))
         }
-        return faces
+        // Vision returns the faces in no fixed order (measured: the same landmarks, shuffled from run to run), and the
+        // paste-back composites them in order, so overlapping paste masks made the output depend on the run. Left to
+        // right by the left eye, then top to bottom.
+        return faces.sorted {
+            ($0.landmarks[0].x, $0.landmarks[0].y) < ($1.landmarks[0].x, $1.landmarks[0].y)
+        }
     }
 
     /// Vision landmark regions → the RetinaFace-style 5 points, in top-left image coords.
@@ -213,5 +218,66 @@ public enum FaceAlign {
             return true
         }
         return ok ? data : nil
+    }
+
+    // MARK: - 16 bits (contract 1.52.0, AB-T-0230)
+    //
+    // The same warps at 16 bits, for a deep input: an 8-bit warp inside a 16-bit frame puts an 8-bit plateau inside the
+    // paste mask and a tone step at its edge (a sky behind a portrait). Same transforms, border, interpolation and
+    // feather as the 8-bit functions above; only the canvases are 16 bits per component.
+
+    /// RGBA, 16 bits per component, little-endian, premultiplied — `.rawRGBA16`'s layout as CoreGraphics draws it.
+    public static let rgba16BitmapInfo =
+        CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue
+
+    /// `warp` into a 16-bit RGBA canvas (opaque black border, `.high` interpolation), returned as its interleaved RGBA
+    /// words, tightly packed (`width * 4` per row).
+    public static func warpDeep(_ image: CGImage, transform: CGAffineTransform,
+                                width: Int, height: Int) -> [UInt16]? {
+        var words = [UInt16](repeating: 0, count: width * height * 4)
+        let ok: Bool = words.withUnsafeMutableBytes { buf in
+            guard let ctx = CGContext(
+                data: buf.baseAddress, width: width, height: height, bitsPerComponent: 16,
+                bytesPerRow: width * 8, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: rgba16BitmapInfo) else { return false }
+            ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            ctx.interpolationQuality = .high
+            let fSrc = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(image.height))
+            let fDst = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(height))
+            ctx.concatenate(fSrc.concatenating(transform).concatenating(fDst))
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            return true
+        }
+        return ok ? words : nil
+    }
+
+    /// `warpedMask` at 16 bits: the feather mask rounded to 16 bits and warped through a 16-bit gray canvas, so the
+    /// blend weight has 65,536 levels rather than 256.
+    public static func warpedMaskDeep(transform cropFromImage: CGAffineTransform,
+                                      width: Int, height: Int,
+                                      feather: Int = 26) -> [Float]? {
+        let n = cropSize
+        let mask16 = featherMask(feather: feather).map { UInt16(($0 * 65535).rounded()).littleEndian }
+        let gray16Info = CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue | CGBitmapInfo.byteOrder16Little.rawValue)
+        guard let provider = CGDataProvider(data: mask16.withUnsafeBytes { Data($0) } as CFData),
+              let gray = CGImage(width: n, height: n, bitsPerComponent: 16, bitsPerPixel: 16,
+                                 bytesPerRow: n * 2, space: CGColorSpaceCreateDeviceGray(),
+                                 bitmapInfo: gray16Info, provider: provider,
+                                 decode: nil, shouldInterpolate: true, intent: .defaultIntent) else { return nil }
+        var data = [UInt16](repeating: 0, count: width * height)
+        let ok: Bool = data.withUnsafeMutableBytes { buf in
+            guard let ctx = CGContext(
+                data: buf.baseAddress, width: width, height: height, bitsPerComponent: 16,
+                bytesPerRow: width * 2, space: CGColorSpaceCreateDeviceGray(),
+                bitmapInfo: gray16Info.rawValue) else { return false }
+            ctx.interpolationQuality = .high
+            let fSrc = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(gray.height))
+            let fDst = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(height))
+            ctx.concatenate(fSrc.concatenating(cropFromImage.inverted()).concatenating(fDst))
+            ctx.draw(gray, in: CGRect(x: 0, y: 0, width: gray.width, height: gray.height))
+            return true
+        }
+        return ok ? data.map { Float(UInt16(littleEndian: $0)) / 65535 } : nil
     }
 }

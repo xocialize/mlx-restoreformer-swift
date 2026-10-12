@@ -14,7 +14,8 @@ let package = Package(
         .executable(name: "restoreformer-validate", targets: ["RestoreFormerValidate"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.38.0"),
+        // ≥ 0.67.0: contract 1.52.0 — `.rawRGBA16` and `ToolDescriptor.rawImageFormats` (the 16-bit boundary, AB-T-0230).
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.67.0"),
         .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.30.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
         .package(url: "https://github.com/xocialize/mlx-profiling.git", from: "0.1.0"),
