@@ -114,6 +114,34 @@ faces' paste masks overlap, the output depended on the run: across 13 runs of v0
 variant came out two ways. `FaceAlign.detectFaces` now sorts faces left to right by the left eye (then top to bottom),
 so the output is deterministic and matches one of the two.
 
+## The image edge under a close-up's crop (0.3.1)
+
+When a face's 512² FFHQ crop extended past the frame (every close-up portrait, and faces near an edge), the face pass
+pasted a dark 1–2 px line along that image edge (AB-T-0227, FACE-RESTORE-EVAL §7). The input → crop warp filled its
+canvas with black, and CoreGraphics antialiases an image's rect boundary against what is underneath, so the image's
+outermost pixels came into the crop blended with black. The network kept the dark edge, and the paste mask, 1 there,
+wrote it back.
+
+- **The fix is outside the network.** `restore`'s crop warp (8 and 16 bits) now draws the image over its own edge pixels
+  extended outward (`FaceAlign.Border.replicate`, `cv2.BORDER_REPLICATE`): each corner pixel fills the quadrant beyond
+  its corner, each outermost row or column is stretched across its side, and the image goes on top. Nothing in the crop
+  is black where the frame ends. The paste-back, the mask and `warp`'s default (upstream's black border) are unchanged.
+  `FACEALIGN_BORDER=black` puts the old crop border back, for parity work.
+- **A crop inside the frame is untouched.** The edge layers are drawn only when the crop reaches within a pixel of the
+  frame, and even then they lie under the image. Faces whose crop stays inside come out byte-identical to 0.3.0.
+- **Measured** (`mlxengine-image/WIP/face-edge-line`, CC0 and public-domain Commons portraits re-cropped so the crop
+  leaves each side, both face packages × 8/16 bits × strength 0.5/1.0, release builds on the GPU):
+  - outputs with an edge line (outermost two columns ≥ 2× the interior's change + 3 levels): **420 of 524 with
+    0.3.0, 0 of 524 with 0.3.1** (131 cases whose crop leaves the frame — 76 faces at 56–142 px between the eyes, 55
+    at 170–418 px, the size of a ×4-upscaled close-up — at 8 and 16 bits, strength 0.5 and 1.0; every side);
+  - the outermost column's mean change from the input: signed −21 to −25 levels with 0.3.0 (−28 to −31 on the large
+    faces), against 4–8 for the interior; −1.9 to −0.2 with 0.3.1, below the interior's own change;
+  - in-bounds controls (32 cases): every output byte-identical to 0.3.0. AB-R-0504's whole-image parity rows: 20/20
+    identical where no crop leaves the frame; `Blake_Lively` (its crops leave the top and right) changes, as it should;
+  - against the same face restored from a wider frame (what the network draws where the frame doesn't end), the fixed
+    outermost pixel is closer than keeping the input's outer 2 px would be, so no mask erosion is added.
+- Parity gates unchanged (the network is untouched): S0 441/441, S1 7/7, S3 40/40.
+
 ## License
 
 Apache-2.0 (port code and weights; upstream is plain Apache-2.0). Residual: ROHQD/model

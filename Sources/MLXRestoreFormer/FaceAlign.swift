@@ -146,11 +146,28 @@ public enum FaceAlign {
 
     // MARK: - Warping
 
+    /// What a warp shows where the source image ends.
+    public enum Border: String, Sendable {
+        /// Opaque black, antialiased against the image's edge: upstream's `cv2.warpAffine` zero border.
+        case black
+        /// The image's edge pixels extended outward, `cv2.BORDER_REPLICATE`: the crop warp `restore` uses (AB-T-0227).
+        case replicate
+    }
+
+    /// The border of `restore`'s input → crop warp (AB-T-0227). With `.black`, a face whose 512² crop extends past the
+    /// frame — every close-up portrait — has the image's outermost pixels blended with black inside the crop: they lie
+    /// only partly inside the image's rect, and CoreGraphics antialiases that boundary against what is underneath. The
+    /// network keeps the dark edge, the paste mask is 1 there, and it comes back as a dark 1–2 px line along the image
+    /// edge (FACE-RESTORE-EVAL §7: GFPGAN 60 of 210 outputs, RF++ 50). `.replicate` leaves no black in the crop where
+    /// the frame ends. `FACEALIGN_BORDER=black` puts the upstream border back, for parity work.
+    public static let cropBorder: Border =
+        ProcessInfo.processInfo.environment["FACEALIGN_BORDER"].flatMap(Border.init(rawValue:)) ?? .replicate
+
     /// Warp `image` by `transform` (top-left coords) into a `width`×`height` canvas.
-    /// Bilinear-quality interpolation via CoreGraphics; the black border matches upstream's
+    /// Bilinear-quality interpolation via CoreGraphics; the default black border matches upstream's
     /// `cv2.warpAffine` zero border.
     public static func warp(_ image: CGImage, transform: CGAffineTransform,
-                            width: Int, height: Int) -> CGImage? {
+                            width: Int, height: Int, border: Border = .black) -> CGImage? {
         guard let ctx = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -165,8 +182,45 @@ public enum FaceAlign {
         let fSrc = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(image.height))
         let fDst = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(height))
         ctx.concatenate(fSrc.concatenating(transform).concatenating(fDst))
-        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        draw(image, in: ctx, border: border, transform: transform, width: width, height: height)
         return ctx.makeImage()
+    }
+
+    /// Draw `image` at its own rect under the context's transform, over the `border`.
+    ///
+    /// `.replicate` lays the image's edge pixels under it, reaching past every side of the frame the canvas sees: each
+    /// corner pixel fills the quadrant beyond its corner, each outermost row or column is stretched across its side, and
+    /// the image goes on top. Each layer overlaps the next by a pixel. CoreGraphics clamps at an image's edge when it
+    /// interpolates and blends only a rect's partly covered boundary pixels with what is underneath, so every boundary
+    /// blends a layer with the edge colour it extends: clamp to edge. A canvas that sees only the image's interior gets
+    /// no layers, and the draw is `.black`'s byte for byte.
+    static func draw(_ image: CGImage, in ctx: CGContext, border: Border, transform: CGAffineTransform,
+                     width: Int, height: Int) {
+        let (W, H) = (image.width, image.height)
+        let w = CGFloat(W), h = CGFloat(H)
+        // How far the canvas's preimage reaches past the image (source px; negative while it stays inside).
+        let inv = transform.inverted()
+        let reach = [CGPoint(x: 0, y: 0), CGPoint(x: width, y: 0), CGPoint(x: width, y: height), CGPoint(x: 0, y: height)]
+            .map { $0.applying(inv) }
+            .map { max(-$0.x, $0.x - w, -$0.y, $0.y - h) }.max()!
+        if border == .replicate, reach > -1 {
+            let e = reach + 4
+            // User space is the image's bottom-left coordinates; `cropping(to:)` takes top-left pixel rects.
+            let layers: [(pixels: CGRect, rect: CGRect)] = [
+                (CGRect(x: 0, y: 0, width: 1, height: 1), CGRect(x: -e, y: h - 1, width: e + 1, height: e + 1)),
+                (CGRect(x: W - 1, y: 0, width: 1, height: 1), CGRect(x: w - 1, y: h - 1, width: e + 1, height: e + 1)),
+                (CGRect(x: 0, y: H - 1, width: 1, height: 1), CGRect(x: -e, y: -e, width: e + 1, height: e + 1)),
+                (CGRect(x: W - 1, y: H - 1, width: 1, height: 1), CGRect(x: w - 1, y: -e, width: e + 1, height: e + 1)),
+                (CGRect(x: 0, y: 0, width: W, height: 1), CGRect(x: 0, y: h - 1, width: w, height: e + 1)),
+                (CGRect(x: 0, y: H - 1, width: W, height: 1), CGRect(x: 0, y: -e, width: w, height: e + 1)),
+                (CGRect(x: 0, y: 0, width: 1, height: H), CGRect(x: -e, y: 0, width: e + 1, height: h)),
+                (CGRect(x: W - 1, y: 0, width: 1, height: H), CGRect(x: w - 1, y: 0, width: e + 1, height: h)),
+            ]
+            for layer in layers {
+                if let pixels = image.cropping(to: layer.pixels) { ctx.draw(pixels, in: layer.rect) }
+            }
+        }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: W, height: H))
     }
 
     /// The feathered paste-back mask in crop space: 1 in the interior, linear ramp to 0 over
@@ -230,10 +284,10 @@ public enum FaceAlign {
     public static let rgba16BitmapInfo =
         CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue
 
-    /// `warp` into a 16-bit RGBA canvas (opaque black border, `.high` interpolation), returned as its interleaved RGBA
-    /// words, tightly packed (`width * 4` per row).
+    /// `warp` into a 16-bit RGBA canvas (`.high` interpolation, opaque black border by default), returned as its
+    /// interleaved RGBA words, tightly packed (`width * 4` per row).
     public static func warpDeep(_ image: CGImage, transform: CGAffineTransform,
-                                width: Int, height: Int) -> [UInt16]? {
+                                width: Int, height: Int, border: Border = .black) -> [UInt16]? {
         var words = [UInt16](repeating: 0, count: width * height * 4)
         let ok: Bool = words.withUnsafeMutableBytes { buf in
             guard let ctx = CGContext(
@@ -246,7 +300,7 @@ public enum FaceAlign {
             let fSrc = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(image.height))
             let fDst = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(height))
             ctx.concatenate(fSrc.concatenating(transform).concatenating(fDst))
-            ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            draw(image, in: ctx, border: border, transform: transform, width: width, height: height)
             return true
         }
         return ok ? words : nil
